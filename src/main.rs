@@ -40,7 +40,7 @@ struct Interpreter{
 }
 
 struct TreeNode{
-    Node: Token,
+    node: Token,
     sub_nodes: Vec<TreeNode>,
 }
 
@@ -87,7 +87,6 @@ impl PartialEq for Token{
     }
 }
 
-//impl Eq for Token{}
 
 impl Interpreter{
     pub fn from(s: &String) -> Self{
@@ -182,14 +181,14 @@ impl Interpreter{
     fn program1(&mut self) -> TreeNode{
         let node = self.compound_statement();
         self.eat(Token::DOT);
-        TreeNode{Node: Token::Other, sub_nodes: vec![node]}
+        TreeNode{node: Token::Other, sub_nodes: vec![node]}
     }
 
     fn compound_statement(&mut self) -> TreeNode{
         self.eat(Token::BEGIN);
         let nodes: Vec<TreeNode> = self.statement_list();
         self.eat(Token::END);
-        TreeNode{Node: Token::Other, sub_nodes: nodes}
+        TreeNode{node: Token::Other, sub_nodes: nodes}
     }
 
     fn statement_list(&mut self) -> Vec<TreeNode>{
@@ -221,18 +220,18 @@ impl Interpreter{
         let token = self.current_token.clone();
         self.eat(Token::ASSIGN);
         let right = self.expr();
-        let node = TreeNode{Node: token, sub_nodes: vec![left, right]};
+        let node = TreeNode{node: token, sub_nodes: vec![left, right]};
         node
     }
 
     fn variable(&mut self) -> TreeNode{
-        let node = TreeNode{Node: self.current_token.clone(), sub_nodes: vec![]};
+        let node = TreeNode{node: self.current_token.clone(), sub_nodes: vec![]};
         self.get_next_token();
         node
     }
 
     fn empty(&mut self) -> TreeNode{
-        TreeNode{Node: Token::Other, sub_nodes: vec![]}
+        TreeNode{node: Token::Other, sub_nodes: vec![]}
     }
 
 
@@ -241,11 +240,11 @@ impl Interpreter{
         match token{
             Token::OP1(c) => {
                 self.get_next_token();
-                TreeNode{Node: Token::UNARY(c), sub_nodes: vec![self.factor()]}
+                TreeNode{node: Token::UNARY(c), sub_nodes: vec![self.factor()]}
             },
             Token::INTEGER(n) => {
                 self.get_next_token();
-                TreeNode{Node: token, sub_nodes: vec![]}
+                TreeNode{node: token, sub_nodes: vec![]}
             }
             Token::LP => {
                 self.get_next_token();
@@ -268,7 +267,7 @@ impl Interpreter{
                 Token::OP2(_) => {
                     let token = self.current_token.clone();
                     self.get_next_token();
-                    node = TreeNode{Node: token, sub_nodes: vec![node, self.factor()]};
+                    node = TreeNode{node: token, sub_nodes: vec![node, self.factor()]};
                 }
                 _ => break,
             }
@@ -284,7 +283,7 @@ impl Interpreter{
                 Token::OP1(_) => {
                     let token = self.current_token.clone();
                     self.get_next_token();
-                    node = TreeNode{Node: token, sub_nodes: vec![node, self.term()]};
+                    node = TreeNode{node: token, sub_nodes: vec![node, self.term()]};
                 }
                 _ => break,
             }
@@ -300,8 +299,7 @@ impl Interpreter{
         self.idx = 0;
         self.get_next_token();
         node
-    }
-        
+    }   
 }
 
 impl fmt::Debug for TreeNode{
@@ -319,11 +317,11 @@ impl fmt::Debug for TreeNode{
             this_level_num = 0;
             for i in 0..pre_level_num{
                 let node = q.pop_front().unwrap();
-                match node.Node{
+                match node.node{
                     Token::ID(_) | Token::INTEGER(_) => 
-                      ret += format!("  |{:?}(0)|  ", node.Node).as_str(),
+                      ret += format!("  |{:?}(0)|  ", node.node).as_str(),
                     _ => {
-                        ret += format!("  |{:?}({})|  ", node.Node, node.sub_nodes.len()).as_str();
+                        ret += format!("  |{:?}({})|  ", node.node, node.sub_nodes.len()).as_str();
                         for n in node.sub_nodes.iter(){
                             q.push_back(n);
                             this_level_num += 1;
@@ -335,6 +333,62 @@ impl fmt::Debug for TreeNode{
         }
 
         write!(f, "{}", ret)
+    }
+}
+
+
+struct Visit{
+    global_scope: HashMap<String, i64>,
+}
+
+impl Visit{
+    
+    fn new() -> Self{
+        Visit{global_scope: HashMap::new()}
+    }
+
+    fn visit(&mut self, root: &TreeNode){
+        match &root.node{
+            Token::ASSIGN => {
+                let var_name = self.vist_Var(&root.sub_nodes[0]);
+                self.global_scope.insert(var_name, self.visit_value(&root.sub_nodes[1]));
+            },
+            Token::Other => {
+                for stat in root.sub_nodes.iter(){
+                    self.visit(stat);
+                }
+            },
+            _ => panic!(format!("error in fn visit. current node: {:?}", root.node)),
+        }
+    }
+
+    fn visit_value(&self, root: &TreeNode) -> i64{
+        match &root.node{
+            Token::ID(s) => self.global_scope[s],
+            Token::INTEGER(n) => *n as i64,
+            Token::UNARY('+') => self.visit_value(&root.sub_nodes[0]),
+            Token::UNARY('-') => -self.visit_value(&root.sub_nodes[0]),
+            Token::OP1('+') => {
+                self.visit_value(&root.sub_nodes[0]) + self.visit_value(&root.sub_nodes[1])
+            }
+            Token::OP1('-') => {
+                self.visit_value(&root.sub_nodes[0]) - self.visit_value(&root.sub_nodes[1])
+            }
+            Token::OP2('*') => {
+                self.visit_value(&root.sub_nodes[0]) * self.visit_value(&root.sub_nodes[1])
+            }
+            Token::OP2('/') => {
+                self.visit_value(&root.sub_nodes[0]) / self.visit_value(&root.sub_nodes[1])
+            }
+            _ => panic!(format!("error in fn visit_value. current node: {:?}", root.node)),
+        }
+    }
+
+    pub fn vist_Var(&mut self, root: &TreeNode) -> String{
+        match &root.node{
+            Token::ID(s) => s.clone(),
+            _ => panic!(format!("error in fn vist_Var. current node: {:?}", root.node)),
+        }
     }
 }
 
@@ -360,5 +414,12 @@ fn main() {
     // }
 
     let node = inp.parse();
-    println!("{:?}", node);
+    //println!("{:?}", node);
+
+    let mut v = Visit::new();
+
+    v.visit(&node);
+    for (name, val) in v.global_scope.iter(){
+        println!("{}: {}", name, val);
+    }
 }
