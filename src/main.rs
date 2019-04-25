@@ -325,7 +325,7 @@ impl fmt::Debug for TreeNode{
                     _ => {
                         ret += format!("  |{:?}({})|  ", node.Node, node.sub_nodes.len()).as_str();
                         for n in node.sub_nodes.iter(){
-                       b      q.push_back(n);
+                            q.push_back(n);
                             this_level_num += 1;
                         }
                     }
