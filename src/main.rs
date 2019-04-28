@@ -9,11 +9,17 @@ use std::collections::{HashMap, VecDeque};
 lazy_static!{
     static ref KeyWord: HashMap<&'static str, Token> = {
         let mut m = HashMap::new();
-        m.insert("BEGIN", Token::BEGIN);
-        m.insert("END", Token::END);
+        m.insert("BEGIN", Token::KEYWORD("BEGIN".to_string()));
+        m.insert("END", Token::KEYWORD("END".to_string()));
+        m.insert("INTEGER", Token::KEYWORD("INTEGER".to_string()));
+        m.insert("REAL", Token::KEYWORD("REAL".to_string()));
+        m.insert("DIV", Token::KEYWORD("DIV".to_string()));
+        m.insert("PROGRAM", Token::KEYWORD("PROGRAM".to_string()));
+        m.insert("VAR", Token::KEYWORD("VAR".to_string()));
         m
     };
 }
+
 
 #[derive(Clone)]
 enum Token{
@@ -22,15 +28,17 @@ enum Token{
     OP2(char),
     LP,
     RP,
-    INTEGER(u64),
+    INTEGER_CONST(u64),
+    REAL_CONST(f64),
     UNARY(char),
-    BEGIN,
-    END,
+    KEYWORD(String),
     DOT,
     ASSIGN,
     SEMI,
+    COMMA,
+    COLON,
     ID(String),
-    Other,
+    ASTNode(String),
 }
 
 struct Interpreter{
@@ -47,20 +55,22 @@ struct TreeNode{
 impl fmt::Debug for Token{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         match self{
-            Token::INTEGER(n) => write!(f, "INTEGER: {}", n),
+            Token::INTEGER_CONST(n) => write!(f, "INTEGER: {}", n),
+            Token::REAL_CONST(n) => write!(f, "REAL: {}", n),
             Token::OP1(c) => write!(f, "operation: {}", c),
             Token::OP2(c) => write!(f, "operation: {}", c),
             Token::EOF => write!(f, "EOF"),
             Token::LP => write!(f, "("),
             Token::RP => write!(f, ")"),
             Token::UNARY(c) => write!(f, "UNARY: {}", c),
-            Token::BEGIN => write!(f, "BEGIN"),
-            Token::END => write!(f, "END"),
+            Token::KEYWORD(s) => write!(f, "KEYWORD: {}", s),
             Token::DOT => write!(f, "DOT"),
             Token::ID(s) => write!(f, "variable: {}", s),
             Token::ASSIGN => write!(f, "ASSIGN"),
             Token::SEMI => write!(f, "SEMI"),
-            Token::Other => write!(f, "Other"),
+            Token::COMMA => write!(f, "COMMA"),
+            Token::COLON => write!(f, "COLON"),
+            Token::ASTNode(s) => write!(f, "ASTNode: {}", s),
         }
     }
 }
@@ -73,15 +83,17 @@ impl PartialEq for Token{
             (Token::OP2(_), Token::OP2(_)) => true,
             (Token::LP, Token::LP) => true,
             (Token::RP, Token::RP) => true,
-            (Token::INTEGER(_), Token::INTEGER(_)) => true,
+            (Token::INTEGER_CONST(_), Token::INTEGER_CONST(_)) => true,
+            (Token::REAL_CONST(_), Token::REAL_CONST(_)) => true,
             (Token::UNARY(_), Token::UNARY(_)) => true,
-            (Token::BEGIN, Token::BEGIN) => true,
-            (Token::END, Token::END) => true,
+            (Token::KEYWORD(a), Token::KEYWORD(b)) => a == b,
             (Token::DOT, Token::DOT) => true,
             (Token::ASSIGN, Token::ASSIGN) => true,
             (Token::SEMI, Token::SEMI) => true,
+            (Token::COMMA, Token::COMMA) => true,
+            (Token::COLON, Token::COLON) => true,
             (Token::ID(_), Token::ID(_)) => true,
-            (Token::Other, Token::Other) => true,
+            (Token::ASTNode(a), Token::ASTNode(b)) => a == b,
             _ => false,
         }
     }
@@ -109,23 +121,35 @@ impl Interpreter{
         }
         match KeyWord.get(s.as_str()){
             Some(value) => value.clone(),
-            None => Token::ID(s),
+            None => Token::ID(s.clone()),
         }
     }
 
-    pub fn get_digits(&mut self) -> u64{
-        let mut ret: u64 = self.text[self.idx] as u64 - '0' as u64;
+    pub fn get_digits(&mut self) -> Token{
+        let start = self.idx;
+        let length = self.text.len();
+        let mut one_dot = false;
         self.idx += 1;
-        while self.idx < self.text.len(){
+        loop{
+            if self.idx >= length {panic!(format!("error in fn get_digits, idx({}) over size({}).", self.idx, length))};
             match self.text[self.idx]{
-                c @ '0' ... '9' => {
-                    ret = ret * 10 + c as u64 - '0' as u64;
-                    self.idx += 1;
+                '0'...'9' => self.idx +=1,
+                '.' => {
+                    if !one_dot {one_dot = true; self.idx += 1;}
+                    else {panic!("find more than one dot in number")}
                 },
                 _ => break,
             }
         }
-        ret
+
+        let num = self.text[start..self.idx].iter().collect::<String>();
+        //println!("\nnum: {}\n", num);
+
+        if one_dot{
+            Token::REAL_CONST(num.parse::<f64>().unwrap())
+        }else{
+            Token::INTEGER_CONST(num.parse::<u64>().unwrap())
+        }
     }
 
     pub fn get_next_token(&mut self) -> Token{
@@ -138,18 +162,23 @@ impl Interpreter{
                         self.idx += 2;
                         Token::ASSIGN
                     }else{
-                        panic!("error in with char ':', missing '=' ");
+                        self.idx += 1;
+                        Token::COLON
                     }
                 },
                 ';' => {
                     self.idx += 1;
                     Token::SEMI
                 },
+                ',' => {
+                    self.idx += 1;
+                    Token::COMMA
+                }
                 '.' => {
                     self.idx += 1;
                     Token::DOT
                 },
-                '0'..='9' => Token::INTEGER(self.get_digits()),
+                '0'..='9' => self.get_digits(),
                 c @ '+' | c @ '-' => {self.idx += 1; Token::OP1(c)},
                 c @ '*' | c @ '/' => {self.idx += 1; Token::OP2(c)},
                 '(' => {self.idx += 1; Token::LP},
@@ -164,10 +193,25 @@ impl Interpreter{
                     }
                     self.get_next_token()
                 },
+                '{' => {
+                    self.skip_comment();
+                    self.get_next_token()
+                }
                 e => panic!(format!("error in chars {}({})", e, self.idx)),
             };
         self.current_token = ret.clone();
         ret
+    }
+
+    fn skip_comment(&mut self){
+        let length = self.text.len();
+        while self.idx < length && self.text[self.idx] != '}'{
+            self.idx += 1;
+        }
+        if self.idx >= length{
+            panic!(format!("error in fn skip comment, index({}) over size({}).", self.idx, length));
+        }
+        self.idx += 1;
     }
 
     fn eat(&mut self, token: Token){
@@ -176,19 +220,72 @@ impl Interpreter{
         }else{
             panic!(format!("error in fn eat, current token: {:?}, token: {:?}", self.current_token, token));
         }
+    }    
+
+    fn program(&mut self) -> TreeNode{
+        self.eat(Token::KEYWORD("PROGRAM".to_string()));
+        let name = self.variable();
+        self.eat(Token::SEMI);
+        let block = self.block();
+        self.eat(Token::DOT);
+        TreeNode{node: Token::ASTNode("PROGRAM".to_string()), sub_nodes: vec![name, block]}
     }
 
-    fn program1(&mut self) -> TreeNode{
-        let node = self.compound_statement();
-        self.eat(Token::DOT);
-        TreeNode{node: Token::Other, sub_nodes: vec![node]}
+    fn block(&mut self) -> TreeNode{
+        TreeNode{node: Token::ASTNode("BLOCK".to_string()), sub_nodes: vec![self.declarations(), self.compound_statement()]}
+    }
+
+    fn declarations(&mut self) -> TreeNode{
+        let mut nodes: Vec<TreeNode> = Vec::new();
+        if self.current_token == Token::KEYWORD("VAR".to_string()){
+            self.eat(Token::KEYWORD("VAR".to_string()));
+            while &self.current_token == &Token::ID("a".to_string()){
+                nodes.extend(self.variable_declaration().into_iter());
+                self.eat(Token::SEMI);
+            }
+        }
+
+        TreeNode{node: Token::ASTNode("DECLAR".to_string()), sub_nodes: nodes}
+    }
+
+    fn variable_declaration(&mut self) -> Vec<TreeNode>{
+        let mut vars: Vec<String> = Vec::new();
+
+        loop{
+            let token = self.current_token.clone();
+            match token{
+                Token::COLON => {
+                    self.get_next_token();
+                    break;
+                },
+                Token::ID(s) => {vars.push(s)},
+                Token::COMMA => {},
+                _ => panic!(format!("error in fn variable_declaration. current token: {:?}", self.current_token)),
+            }
+            self.get_next_token();
+        }
+
+        match &self.current_token{
+            Token::KEYWORD(keyword) if keyword.as_str() == "INTEGER" || keyword.as_str() == "REAL" => {},
+            _ => panic!(format!("error in fn variable_declaration, wrong type: {:?}", self.current_token)),
+        }
+
+        let mut ret: Vec<TreeNode> = Vec::new();
+        for var in vars{
+            let node1 = TreeNode{node: Token::ID(var.to_string()), sub_nodes: vec![]};
+            let node2 = TreeNode{node: self.current_token.clone(), sub_nodes: vec![]};
+            ret.push(TreeNode{node: Token::ASTNode("VARDEC".to_string()), sub_nodes: vec![node1, node2]});
+        }
+        
+        self.get_next_token();
+        ret
     }
 
     fn compound_statement(&mut self) -> TreeNode{
-        self.eat(Token::BEGIN);
+        self.eat(Token::KEYWORD("BEGIN".to_string()));
         let nodes: Vec<TreeNode> = self.statement_list();
-        self.eat(Token::END);
-        TreeNode{node: Token::Other, sub_nodes: nodes}
+        self.eat(Token::KEYWORD("END".to_string()));
+        TreeNode{node: Token::ASTNode("COMP".to_string()), sub_nodes: nodes}
     }
 
     fn statement_list(&mut self) -> Vec<TreeNode>{
@@ -199,17 +296,16 @@ impl Interpreter{
             nodes.push(self.statement());
         }
 
-        if self.current_token == Token::ID('a'.to_string()){
+        if self.current_token == Token::ID("a".to_string()){
             panic!(format!("error in fn statement list, current token: {:?}", self.current_token));
         }
-
         nodes
     }
 
     fn statement(&mut self) -> TreeNode{
         let node = match &self.current_token{
-            Token::BEGIN => self.compound_statement(),
-            Token::ID(v) => self.assignment_statement(),
+            Token::KEYWORD(keyword) if keyword.as_str() == "BEGIN" => self.compound_statement(),
+            Token::ID(_) => self.assignment_statement(),
             _ => self.empty(),
         };
         node
@@ -231,7 +327,7 @@ impl Interpreter{
     }
 
     fn empty(&mut self) -> TreeNode{
-        TreeNode{node: Token::Other, sub_nodes: vec![]}
+        TreeNode{node: Token::ASTNode("Empty".to_string()), sub_nodes: vec![]}
     }
 
 
@@ -242,29 +338,33 @@ impl Interpreter{
                 self.get_next_token();
                 TreeNode{node: Token::UNARY(c), sub_nodes: vec![self.factor()]}
             },
-            Token::INTEGER(n) => {
+            Token::INTEGER_CONST(_) | Token::REAL_CONST(_) => {
                 self.get_next_token();
                 TreeNode{node: token, sub_nodes: vec![]}
-            }
+            },
             Token::LP => {
                 self.get_next_token();
                 let node = self.expr();
                 self.eat(Token::RP);
                 node
-            }
+            },
             Token::ID(c) =>{
                 self.variable()
-            }
+            },
             _ => panic!(format!("error in fn factor Token::ID branch, token: {:?}", token)),
         }
     }
 
     fn term(&mut self) -> TreeNode{
         let mut node = self.factor();
-       
         loop{
             match &self.current_token{
-                Token::OP2(_) => {
+                Token::KEYWORD(keyword) if keyword.as_str() == "DIV" => {
+                    let token = self.current_token.clone();
+                    self.get_next_token();
+                    node = TreeNode{node: token, sub_nodes: vec![node, self.factor()]};
+                },
+                Token::OP2(a)=> {
                     let token = self.current_token.clone();
                     self.get_next_token();
                     node = TreeNode{node: token, sub_nodes: vec![node, self.factor()]};
@@ -292,14 +392,18 @@ impl Interpreter{
     }
 
     pub fn parse(&mut self) -> TreeNode{
-        let node = self.program1();
+        let node = self.program();
         if self.current_token != Token::EOF{
             panic!(format!("error in parse: do not found EOF in the end. current token: {:?}", self.current_token));
         }
+        self.reset();
+        node
+    }
+
+    fn reset(&mut self){
         self.idx = 0;
         self.get_next_token();
-        node
-    }   
+    }
 }
 
 impl fmt::Debug for TreeNode{
@@ -318,7 +422,7 @@ impl fmt::Debug for TreeNode{
             for i in 0..pre_level_num{
                 let node = q.pop_front().unwrap();
                 match node.node{
-                    Token::ID(_) | Token::INTEGER(_) => 
+                    Token::ID(_) | Token::INTEGER_CONST(_) | Token::REAL_CONST(_) => 
                       ret += format!("  |{:?}(0)|  ", node.node).as_str(),
                     _ => {
                         ret += format!("  |{:?}({})|  ", node.node, node.sub_nodes.len()).as_str();
@@ -337,89 +441,90 @@ impl fmt::Debug for TreeNode{
 }
 
 
-struct Visit{
-    global_scope: HashMap<String, i64>,
-}
+// struct Visit{
+//     global_scope: HashMap<String, i64>,
+// }
 
-impl Visit{
+// impl Visit{
     
-    fn new() -> Self{
-        Visit{global_scope: HashMap::new()}
-    }
+//     fn new() -> Self{
+//         Visit{global_scope: HashMap::new()}
+//     }
 
-    fn visit(&mut self, root: &TreeNode){
-        match &root.node{
-            Token::ASSIGN => {
-                let var_name = self.vist_Var(&root.sub_nodes[0]);
-                self.global_scope.insert(var_name, self.visit_value(&root.sub_nodes[1]));
-            },
-            Token::Other => {
-                for stat in root.sub_nodes.iter(){
-                    self.visit(stat);
-                }
-            },
-            _ => panic!(format!("error in fn visit. current node: {:?}", root.node)),
-        }
-    }
+//     fn visit(&mut self, root: &TreeNode){
+//         match &root.node{
+//             Token::ASSIGN => {
+//                 let var_name = self.vist_Var(&root.sub_nodes[0]);
+//                 self.global_scope.insert(var_name, self.visit_value(&root.sub_nodes[1]));
+//             },
+//             Token::Other => {
+//                 for stat in root.sub_nodes.iter(){
+//                     self.visit(stat);
+//                 }
+//             },
+//             _ => panic!(format!("error in fn visit. current node: {:?}", root.node)),
+//         }
+//     }
 
-    fn visit_value(&self, root: &TreeNode) -> i64{
-        match &root.node{
-            Token::ID(s) => self.global_scope[s],
-            Token::INTEGER(n) => *n as i64,
-            Token::UNARY('+') => self.visit_value(&root.sub_nodes[0]),
-            Token::UNARY('-') => -self.visit_value(&root.sub_nodes[0]),
-            Token::OP1('+') => {
-                self.visit_value(&root.sub_nodes[0]) + self.visit_value(&root.sub_nodes[1])
-            }
-            Token::OP1('-') => {
-                self.visit_value(&root.sub_nodes[0]) - self.visit_value(&root.sub_nodes[1])
-            }
-            Token::OP2('*') => {
-                self.visit_value(&root.sub_nodes[0]) * self.visit_value(&root.sub_nodes[1])
-            }
-            Token::OP2('/') => {
-                self.visit_value(&root.sub_nodes[0]) / self.visit_value(&root.sub_nodes[1])
-            }
-            _ => panic!(format!("error in fn visit_value. current node: {:?}", root.node)),
-        }
-    }
+//     fn visit_value(&self, root: &TreeNode) -> i64{
+//         match &root.node{
+//             Token::ID(s) => self.global_scope[s],
+//             Token::INTEGER(n) => *n as i64,
+//             Token::UNARY('+') => self.visit_value(&root.sub_nodes[0]),
+//             Token::UNARY('-') => -self.visit_value(&root.sub_nodes[0]),
+//             Token::OP1('+') => {
+//                 self.visit_value(&root.sub_nodes[0]) + self.visit_value(&root.sub_nodes[1])
+//             }
+//             Token::OP1('-') => {
+//                 self.visit_value(&root.sub_nodes[0]) - self.visit_value(&root.sub_nodes[1])
+//             }
+//             Token::OP2('*') => {
+//                 self.visit_value(&root.sub_nodes[0]) * self.visit_value(&root.sub_nodes[1])
+//             }
+//             Token::OP2('/') => {
+//                 self.visit_value(&root.sub_nodes[0]) / self.visit_value(&root.sub_nodes[1])
+//             }
+//             _ => panic!(format!("error in fn visit_value. current node: {:?}", root.node)),
+//         }
+//     }
 
-    pub fn vist_Var(&mut self, root: &TreeNode) -> String{
-        match &root.node{
-            Token::ID(s) => s.clone(),
-            _ => panic!(format!("error in fn vist_Var. current node: {:?}", root.node)),
-        }
-    }
-}
+//     pub fn vist_Var(&mut self, root: &TreeNode) -> String{
+//         match &root.node{
+//             Token::ID(s) => s.clone(),
+//             _ => panic!(format!("error in fn vist_Var. current node: {:?}", root.node)),
+//         }
+//     }
+// }
 
 
  
 
 fn main() {
-    let input = "BEGIN\n".to_string() + "    BEGIN\n" + "        number := 2;\n"
-    + "        a := number;\n" + "        b := 10 * a + 10 * number / 4;\n" + "        c := a - - b\n"
-    + "    END;\n" + "    x := 11;\n" + "END.";
+    let input = "PROGRAM Part10AST;\n".to_string() + "VAR\n" + "   a, b : INTEGER;\n" + "   y    : REAL;\n\n" + 
+        "BEGIN {Part10AST}\n" + "   a := 2;\n" + "   b := 10 * a + 10 * a DIV 4;\n" + "   y := 20 / 7 + 3.14;" + 
+        "END.  {Part10AST}\n";
 
     let mut inp = Interpreter::from(&input);
 
-    // loop{
-    //     let token = &inp.current_token;
-    //     match token{
-    //         Token::EOF => break,
-    //         _ => {
-    //             println!("{:?}", token);
-    //             inp.get_next_token();
-    //         }
-    //     }
-    // }
+    loop{
+        let token = &inp.current_token;
+        match token{
+            Token::EOF => break,
+            _ => {
+                println!("{:?}", token);
+                inp.get_next_token();
+            }
+        }
+    }
+    inp.reset();
 
     let node = inp.parse();
-    //println!("{:?}", node);
+    println!("{:?}", node);
 
-    let mut v = Visit::new();
+    //let mut v = Visit::new();
 
-    v.visit(&node);
-    for (name, val) in v.global_scope.iter(){
-        println!("{}: {}", name, val);
-    }
+    // v.visit(&node);
+    // for (name, val) in v.global_scope.iter(){
+    //     println!("{}: {}", name, val);
+    // }
 }
